@@ -80,6 +80,19 @@ function writeEnv(filePath, lines) {
   fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf8');
   ok(`Written: ${path.relative(ROOT, filePath)}`);
 }
+function envQuote(value) {
+  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+function publicPhpUrl(domain, domainUrl, phpHostPort) {
+  if (domain === 'localhost') return `http://localhost:${phpHostPort}`;
+  return domainUrl;
+}
+function publicEassistPluginUrl(domain) {
+  if (domain === 'localhost' || domain.startsWith('localhost:')) {
+    return 'http://localhost:3002/dist-plugin/plugins.js';
+  }
+  return `https://${domain}/dist-plugin/plugins.js`;
+}
 function run(cmd, cwd) {
   return spawnSync(cmd, { stdio: 'inherit', shell: true, cwd });
 }
@@ -248,10 +261,15 @@ async function main() {
   // ══════════════════════════════════════════════════════════════════════════
   title('STEP 5 — S3 / Object Storage');
   // ══════════════════════════════════════════════════════════════════════════
-  let s3Endpoint, s3Bucket, s3Region, s3Key, s3Secret, s3ForcePathStyle;
+  let s3Endpoint, s3PublicEndpoint, s3Bucket, s3Region, s3Key, s3Secret, s3ForcePathStyle;
   if (isOnPrem) {
-    info('On-prem: MinIO will be used. Container hostname is sce-minio.');
+    info('On-prem: MinIO will be used. Container hostname is sce-minio (internal port 9000).');
+    // Internal Docker-to-Docker endpoint (PHP/Python containers reach MinIO by service name)
     s3Endpoint       = 'http://sce-minio:9000';
+    // Public endpoint used by browsers and presigned URLs (host-mapped port)
+    s3PublicEndpoint = isLocalhost
+      ? 'http://localhost:9010'
+      : `http://${domain}:9010`;
     s3Bucket         = await ask('MinIO bucket name', lguCode);
     s3Region         = 'us-east-1';
     s3Key            = await ask('MinIO access key', 'minioadmin');
@@ -261,20 +279,25 @@ async function main() {
   } else {
     info('Cloud: provide your S3-compatible storage credentials.');
     s3Endpoint       = await ask('S3 endpoint URL (e.g. https://sgp1.digitaloceanspaces.com)');
+    s3PublicEndpoint = s3Endpoint;
     s3Bucket         = await ask('S3 bucket name');
     s3Region         = await ask('S3 region', 'sgp1');
     s3Key            = await ask('S3 access key');
     s3Secret         = await ask('S3 secret key');
     s3ForcePathStyle = 'false';
   }
-  const s3UploadPath    = await ask(`S3 prefix for uploads`, `${ecosystemName}/uploads/`);
-  const emsFilePath     = await ask(`S3 prefix for EMS incident files`, `${ecosystemName}/incident/`);
-  const uploadDestPath  = await ask(`S3 prefix for final uploads`, `${ecosystemName}/dest/`);
+  const storagePathBase = slugify(ecosystemName);
+  // These paths are S3 key prefixes WITHIN the bucket — do NOT include the bucket name.
+  // The AWS SDK prepends the bucket automatically: bucket/prefix/filename
+  const s3UploadPath    = (await ask(`S3 key prefix for uploads (no bucket name)`, `uploads/`)).toLowerCase();
+  const emsFilePath     = (await ask(`S3 key prefix for EMS incident files (no bucket name)`, `incident/`)).toLowerCase();
+  const uploadDestPath  = (await ask(`S3 key prefix for final uploads (no bucket name)`, `dest/`)).toLowerCase();
 
   // ══════════════════════════════════════════════════════════════════════════
   title('STEP 6 — PHP App Settings (SCE-PHP-SYSTEMS)');
   // ══════════════════════════════════════════════════════════════════════════
   const phpHostPort    = await ask('PHP app host port (must be free on this machine)', '8880');
+  const phpPublicUrl   = publicPhpUrl(domain, domainUrl, phpHostPort);
   const hashSalt       = await ask('HASH_ID_SALT (random string)', randSecret(16));
   const faceCollection = await ask('AWS Rekognition FACE_COLLECTION name (create after install)');
 
@@ -303,7 +326,7 @@ async function main() {
   const cctvEnabled    = await askYN('Enable CCTV integration?', false);
 
   // EASSIST_PLUGIN — URL of the eAssist dist-plugin build served by the eAssist container
-  const eassistPlugin  = await ask('EASSIST_PLUGIN (URL to eAssist dist-plugin)', `${domainUrl}/eassist/dist-plugin`);
+  const eassistPlugin  = await ask('EASSIST_PLUGIN (URL to eAssist plugins.js)', publicEassistPluginUrl(domain));
 
   // ══════════════════════════════════════════════════════════════════════════
   title('STEP 7 — Python Service Settings');
@@ -467,8 +490,10 @@ async function main() {
     const phpEnvPath = path.join(phpDir, '.env');
     // Container paths (always Linux inside Docker)
     const uploadTempPath = '/var/www/sce/temp_uploads/';
-    const uploadTempHref = `${domainUrl}/temp_uploads/`;
-    const s3PhpEndpoint  = isOnPrem ? 'http://sce-minio:9000' : s3Endpoint;
+    const uploadTempHref = `${phpPublicUrl}/temp_uploads/`;
+    // Docker: PHP container reaches MinIO by service name on internal port 9000.
+    // Non-Docker: use the host-exposed port directly.
+    const s3PhpEndpoint = isOnPrem ? 'http://sce-minio:9000' : s3Endpoint;
 
     writeEnv(phpEnvPath, [
       '# Generated by SCE configure.js',
@@ -480,8 +505,8 @@ async function main() {
       `DB_HOST=postgres-wal-pgpool`,
       `DB_PORT=5432`,
       `DB_NAME=${pgDb}`,
-      `DB_USER=${pgUser}`,
-      `DB_PASSWORD=${pgPassword}`,
+      `DB_USER=postgres`,
+      `DB_PASSWORD=${pgSuperPw}`,
       `DB_SUPER_USER=postgres`,
       `DB_SUPER_PASSWORD=${pgSuperPw}`,
       '',
@@ -492,8 +517,10 @@ async function main() {
       `REDIS_DB=0`,
       `REDIS_PREFIX=`,
       '',
-      '# S3',
+      '# S3 / MinIO',
       `S3_ENDPOINT=${s3PhpEndpoint}`,
+      `S3_PUBLIC_ENDPOINT=${s3PublicEndpoint}`,
+      `S3_FORCE_PATH_STYLE=${s3ForcePathStyle}`,
       `S3_BUCKET=${s3Bucket}`,
       `S3_REGION=${s3Region}`,
       `S3_KEY=${s3Key}`,
@@ -514,15 +541,15 @@ async function main() {
       `COOKIE_SAMESITE=None`,
       '',
       '# EMQX / MQTT',
-      `MQ_API_URL=http://sce-emqx:18083`,
+      `MQ_API_URL=http://host.docker.internal:18083`,
       `MQ_API_KEY=${mqApiKey}`,
       `MQ_API_SECRET=${mqApiSecret}`,
-      `MQ_WS_URL=ws://sce-emqx:8083/mqtt`,
+      `MQ_WS_URL=ws://localhost:8083/mqtt`,
       `MQ_TOPIC=${mqTopic}`,
       '',
       '# System identity',
       `LGU=${lguCode}`,
-      `LGU_NAME=${lguName}`,
+      `LGU_NAME=${envQuote(lguName)}`,
       `HASH_ID_SALT=${hashSalt}`,
       `PARTNER_ID=1`,
       '',
@@ -532,11 +559,11 @@ async function main() {
       `UPLOAD_DEST_PATH=${uploadDestPath}`,
       '',
       '# URLs',
-      `QRCODE_BASE_URL=${domainUrl}/CPA/#/deeplink?data=`,
-      `CPA_DOWNLOAD_URL=${domainUrl}/CPA/download`,
-      `CPA_LOGIN_URL=${domainUrl}/CPA/#/login`,
+      `QRCODE_BASE_URL=${envQuote(`${phpPublicUrl}/CPA/#/deeplink?data=`)}`,
+      `CPA_DOWNLOAD_URL=${phpPublicUrl}/CPA/download`,
+      `CPA_LOGIN_URL=${envQuote(`${phpPublicUrl}/CPA/#/login`)}`,
       `PYTHON_API_URL=http://sce-python-api:8000`,
-      `SCE_SETTINGS_API_URL=${domainUrl}/UAC/api`,
+      `SCE_SETTINGS_API_URL=${phpPublicUrl}/UAC/api`,
       '',
       '# Face / KYC',
       `FACE_COLLECTION=${faceCollection}`,
@@ -576,14 +603,15 @@ async function main() {
   if (fs.existsSync(pythonDir)) {
     const streamsDir = '/app/streams';
     const uploadsDir = '/tmp/imports';
+    // Docker: Python container reaches MinIO by service name on internal port 9000.
     const s3PyEndpoint = isOnPrem ? 'http://sce-minio:9000' : s3Endpoint;
 
     writeEnv(path.join(pythonDir, '.env'), [
       '# Generated by SCE configure.js',
       '',
       '# Database',
-      `UAC_DB_URL=postgresql://${pgUser}:${pgPassword}@postgres-wal-pgpool:5432/${pgDb}`,
-      `IMPORT_DB_URL=postgresql://${pgUser}:${pgPassword}@postgres-wal-pgpool:5432/${pgDb}`,
+      `UAC_DB_URL=postgresql://postgres:${pgSuperPw}@postgres-wal-pgpool:5432/${pgDb}`,
+      `IMPORT_DB_URL=postgresql://postgres:${pgSuperPw}@postgres-wal-pgpool:5432/${pgDb}`,
       '',
       '# S3',
       `S3_ENDPOINT_URL=${s3PyEndpoint}`,
@@ -591,7 +619,7 @@ async function main() {
       `S3_SECRET_KEY=${s3Secret}`,
       `S3_BUCKET_NAME=${s3Bucket}`,
       `S3_REGION=${s3Region}`,
-      `S3_PREFIX=${ecosystemName}`,
+      `S3_PREFIX=${storagePathBase}`,
       '',
       '# Callback to PHP',
       `PHP_CALLBACK_TIMEOUT=30`,
@@ -640,7 +668,7 @@ async function main() {
       `KYC_REQUIRE_BOTH_SIDES=false`,
       '',
       '# EMQX',
-      `EMQX_HOST=http://sce-emqx:18083`,
+      `EMQX_HOST=http://host.docker.internal:18083`,
       `EMQX_PORT=2096`,
       `EMQX_KEY=${mqApiKey}`,
       `EMQX_SECRET=${mqApiSecret}`,
@@ -727,7 +755,7 @@ async function main() {
   title('DONE — Post-install checklist');
   // ══════════════════════════════════════════════════════════════════════════
   printPostInstallChecklist({
-    domain, domainUrl, isOnPrem, s3Bucket, mqApiKey,
+    domain, domainUrl: phpPublicUrl, isOnPrem, s3Bucket, mqApiKey,
     faceCollection, cctvEnabled, repos,
   });
 

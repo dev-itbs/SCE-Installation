@@ -136,7 +136,7 @@ echo ================================================================
 echo  STEP 5 -- S3 / Object Storage
 echo ================================================================
 if "!IS_ONPREM!"=="true" (
-    echo  Info: On-prem -- MinIO container hostname is sce-minio
+    echo  Info: On-prem -- MinIO container hostname is sce-minio ^(internal port 9000^)
     set "S3_ENDPOINT=http://sce-minio:9000"
     set /p "S3_BUCKET=MinIO bucket name [!LGU_CODE!]: " & if "!S3_BUCKET!"=="" set "S3_BUCKET=!LGU_CODE!"
     set "S3_REGION=us-east-1"
@@ -144,6 +144,7 @@ if "!IS_ONPREM!"=="true" (
     call :rand16 _r10
     set /p "S3_SECRET=MinIO secret key [!_r10!]: " & if "!S3_SECRET!"=="" set "S3_SECRET=!_r10!"
     set "S3_FORCE_PATH=true"
+    if "!DOMAIN!"=="localhost" ( set "S3_PUBLIC_ENDPOINT=http://localhost:9010" ) else ( set "S3_PUBLIC_ENDPOINT=http://!DOMAIN!:9010" )
 ) else (
     set /p "S3_ENDPOINT=S3 endpoint URL (e.g. https://sgp1.digitaloceanspaces.com): "
     set /p "S3_BUCKET=S3 bucket name: "
@@ -151,13 +152,19 @@ if "!IS_ONPREM!"=="true" (
     set /p "S3_KEY=S3 access key: "
     set /p "S3_SECRET=S3 secret key: "
     set "S3_FORCE_PATH=false"
+    set "S3_PUBLIC_ENDPOINT=!S3_ENDPOINT!"
 )
-set /p "S3_UPLOAD_PATH=S3 prefix for uploads [!ECOSYSTEM_NAME!/uploads/]: "
-if "!S3_UPLOAD_PATH!"=="" set "S3_UPLOAD_PATH=!ECOSYSTEM_NAME!/uploads/"
-set /p "EMS_FILE_PATH=S3 prefix for EMS files [!ECOSYSTEM_NAME!/incident/]: "
-if "!EMS_FILE_PATH!"=="" set "EMS_FILE_PATH=!ECOSYSTEM_NAME!/incident/"
-set /p "UPLOAD_DEST_PATH=S3 prefix for final uploads [!ECOSYSTEM_NAME!/dest/]: "
-if "!UPLOAD_DEST_PATH!"=="" set "UPLOAD_DEST_PATH=!ECOSYSTEM_NAME!/dest/"
+set "STORAGE_PATH_BASE=!LGU_CODE!"
+:: S3 key prefixes are paths WITHIN the bucket -- do NOT include the bucket name.
+set /p "S3_UPLOAD_PATH=S3 key prefix for uploads (no bucket name) [uploads/]: "
+if "!S3_UPLOAD_PATH!"=="" set "S3_UPLOAD_PATH=uploads/"
+call :to_lower S3_UPLOAD_PATH
+set /p "EMS_FILE_PATH=S3 key prefix for EMS files (no bucket name) [incident/]: "
+if "!EMS_FILE_PATH!"=="" set "EMS_FILE_PATH=incident/"
+call :to_lower EMS_FILE_PATH
+set /p "UPLOAD_DEST_PATH=S3 key prefix for final uploads (no bucket name) [dest/]: "
+if "!UPLOAD_DEST_PATH!"=="" set "UPLOAD_DEST_PATH=dest/"
+call :to_lower UPLOAD_DEST_PATH
 
 :: ══════════════════════════════════════════════════════════════════════════════
 echo.
@@ -166,6 +173,8 @@ echo  STEP 6 -- PHP App Settings
 echo ================================================================
 set /p "PHP_HOST_PORT=PHP app host port (must be free on this machine) [8880]: "
 if "!PHP_HOST_PORT!"=="" set "PHP_HOST_PORT=8880"
+set "PHP_PUBLIC_URL=!DOMAIN_URL!"
+if "!DOMAIN!"=="localhost" set "PHP_PUBLIC_URL=http://localhost:!PHP_HOST_PORT!"
 call :rand16 _rs
 set /p "HASH_SALT=HASH_ID_SALT [!_rs!]: " & if "!HASH_SALT!"=="" set "HASH_SALT=!_rs!"
 set /p "FACE_COLLECTION=AWS Rekognition FACE_COLLECTION name: "
@@ -187,9 +196,12 @@ if "!ICE_SERVERS!"=="" set "ICE_SERVERS=[{\"urls\":[\"stun:stun.l.google.com:193
 set /p "_cctv=Enable CCTV integration? [y/N]: "
 set "CCTV_ENABLED=false"
 if /i "!_cctv!"=="y" set "CCTV_ENABLED=true"
-:: EASSIST_PLUGIN — URL of the eAssist dist-plugin build (not a file path)
-set /p "EASSIST_PLUGIN=EASSIST_PLUGIN URL [!DOMAIN_URL!/eassist/dist-plugin]: "
-if "!EASSIST_PLUGIN!"=="" set "EASSIST_PLUGIN=!DOMAIN_URL!/eassist/dist-plugin"
+:: EASSIST_PLUGIN — full browser URL of the eAssist plugin loader script
+set "EASSIST_PLUGIN_DEFAULT=https://!DOMAIN!/dist-plugin/plugins.js"
+if "!DOMAIN!"=="localhost" set "EASSIST_PLUGIN_DEFAULT=http://localhost:3002/dist-plugin/plugins.js"
+echo !DOMAIN! | findstr /b "localhost:" >nul 2>&1 && set "EASSIST_PLUGIN_DEFAULT=http://localhost:3002/dist-plugin/plugins.js"
+set /p "EASSIST_PLUGIN=EASSIST_PLUGIN URL [!EASSIST_PLUGIN_DEFAULT!]: "
+if "!EASSIST_PLUGIN!"=="" set "EASSIST_PLUGIN=!EASSIST_PLUGIN_DEFAULT!"
 
 :: ══════════════════════════════════════════════════════════════════════════════
 echo.
@@ -354,8 +366,8 @@ if defined DIR_PHP (
         echo DB_HOST=postgres-wal-pgpool
         echo DB_PORT=5432
         echo DB_NAME=!PG_DB!
-        echo DB_USER=!PG_USER!
-        echo DB_PASSWORD=!PG_PASSWORD!
+        echo DB_USER=postgres
+        echo DB_PASSWORD=!PG_SUPER_PW!
         echo DB_SUPER_USER=postgres
         echo DB_SUPER_PASSWORD=!PG_SUPER_PW!
         echo.
@@ -366,8 +378,10 @@ if defined DIR_PHP (
         echo REDIS_DB=0
         echo REDIS_PREFIX=
         echo.
-        echo # S3
+        echo # S3 / MinIO
         echo S3_ENDPOINT=!_s3p!
+        echo S3_PUBLIC_ENDPOINT=!S3_PUBLIC_ENDPOINT!
+        echo S3_FORCE_PATH_STYLE=!S3_FORCE_PATH!
         echo S3_BUCKET=!S3_BUCKET!
         echo S3_REGION=!S3_REGION!
         echo S3_KEY=!S3_KEY!
@@ -388,29 +402,29 @@ if defined DIR_PHP (
         echo COOKIE_SAMESITE=None
         echo.
         echo # EMQX / MQTT
-        echo MQ_API_URL=http://sce-emqx:18083
+        echo MQ_API_URL=http://host.docker.internal:18083
         echo MQ_API_KEY=!MQ_API_KEY!
         echo MQ_API_SECRET=!MQ_API_SECRET!
-        echo MQ_WS_URL=ws://sce-emqx:8083/mqtt
+        echo MQ_WS_URL=ws://localhost:8083/mqtt
         echo MQ_TOPIC=!MQ_TOPIC!
         echo.
         echo # System identity
         echo LGU=!LGU_CODE!
-        echo LGU_NAME=!LGU_NAME!
+        echo LGU_NAME="!LGU_NAME!"
         echo HASH_ID_SALT=!HASH_SALT!
         echo PARTNER_ID=1
         echo.
         echo # Upload paths
         echo UPLOAD_TEMP_PATH=/var/www/sce/temp_uploads/
-        echo UPLOAD_TEMP_HREF_PATH=!DOMAIN_URL!/temp_uploads/
+        echo UPLOAD_TEMP_HREF_PATH=!PHP_PUBLIC_URL!/temp_uploads/
         echo UPLOAD_DEST_PATH=!UPLOAD_DEST_PATH!
         echo.
         echo # URLs
-        echo QRCODE_BASE_URL=!DOMAIN_URL!/CPA/#/deeplink?data=
-        echo CPA_DOWNLOAD_URL=!DOMAIN_URL!/CPA/download
-        echo CPA_LOGIN_URL=!DOMAIN_URL!/CPA/#/login
+        echo QRCODE_BASE_URL="!PHP_PUBLIC_URL!/CPA/#/deeplink?data="
+        echo CPA_DOWNLOAD_URL=!PHP_PUBLIC_URL!/CPA/download
+        echo CPA_LOGIN_URL="!PHP_PUBLIC_URL!/CPA/#/login"
         echo PYTHON_API_URL=http://sce-python-api:8000
-        echo SCE_SETTINGS_API_URL=!DOMAIN_URL!/UAC/api
+        echo SCE_SETTINGS_API_URL=!PHP_PUBLIC_URL!/UAC/api
         echo.
         echo # Face / KYC
         echo FACE_COLLECTION=!FACE_COLLECTION!
@@ -454,8 +468,8 @@ if defined DIR_PYTHON (
         echo # Generated by SCE configure.bat
         echo.
         echo # Database
-        echo UAC_DB_URL=postgresql://!PG_USER!:!PG_PASSWORD!@postgres-wal-pgpool:5432/!PG_DB!
-        echo IMPORT_DB_URL=postgresql://!PG_USER!:!PG_PASSWORD!@postgres-wal-pgpool:5432/!PG_DB!
+        echo UAC_DB_URL=postgresql://postgres:!PG_SUPER_PW!@postgres-wal-pgpool:5432/!PG_DB!
+        echo IMPORT_DB_URL=postgresql://postgres:!PG_SUPER_PW!@postgres-wal-pgpool:5432/!PG_DB!
         echo.
         echo # S3
         echo S3_ENDPOINT_URL=!_s3py!
@@ -463,7 +477,7 @@ if defined DIR_PYTHON (
         echo S3_SECRET_KEY=!S3_SECRET!
         echo S3_BUCKET_NAME=!S3_BUCKET!
         echo S3_REGION=!S3_REGION!
-        echo S3_PREFIX=!ECOSYSTEM_NAME!
+        echo S3_PREFIX=!STORAGE_PATH_BASE!
         echo.
         echo # Callback
         echo PHP_CALLBACK_TIMEOUT=30
@@ -512,7 +526,7 @@ if defined DIR_PYTHON (
         echo KYC_REQUIRE_BOTH_SIDES=false
         echo.
         echo # EMQX
-        echo EMQX_HOST=http://sce-emqx:18083
+        echo EMQX_HOST=http://host.docker.internal:18083
         echo EMQX_PORT=2096
         echo EMQX_KEY=!MQ_API_KEY!
         echo EMQX_SECRET=!MQ_API_SECRET!
