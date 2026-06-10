@@ -169,7 +169,8 @@ LGU_NAME="$REPLY"
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 3 — Database (VaultFlow360 / PostgreSQL)"
-ask "PostgreSQL database name" "postgres";          PG_DB="$REPLY"
+info "This is the name of the PostgreSQL database the app will use."
+ask "PostgreSQL database name" "sce_db";            PG_DB="$REPLY"
 ask "PostgreSQL app username" "appuser";            PG_USER="$REPLY"
 ask "PostgreSQL app password" "$(rand_secret 16)";  PG_PASSWORD="$REPLY"
 ask "PostgreSQL superuser password" "$(rand_secret 16)"; PG_SUPER_PW="$REPLY"
@@ -221,11 +222,7 @@ ask "S3 prefix for final uploads" "${ECOSYSTEM_NAME}/dest/";     UPLOAD_DEST_PAT
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 6 — PHP App Settings (SCE-PHP-SYSTEMS)"
 ask "HASH_ID_SALT" "$(rand_secret 16)";              HASH_SALT="$REPLY"
-ask "PARTNER_ID" "$LGU_CODE";                        PARTNER_ID="$REPLY"
 ask "AWS Rekognition FACE_COLLECTION name";          FACE_COLLECTION="$REPLY"
-ask "EMS Google Maps Map ID";                        GOOGLE_MAPS_ID="$REPLY"
-ask "EMS dispatch level" "1";                        EMS_LEVEL="$REPLY"
-ask "EMS boundary radius (km)" "10";                 EMS_BOUNDARY_KM="$REPLY"
 info "Cookie domain = the domain where browsers send auth cookies."
 ask "COOKIE_DOMAIN" "$DOMAIN";                       COOKIE_DOMAIN="$REPLY"
 info "Mailgun is used for email notifications."
@@ -235,16 +232,17 @@ ask "Mailgun validation key";                        MAILGUN_VAL_KEY="$REPLY"
 info "Firebase — used for push notifications (Android/iOS)."
 ask "FIREBASE_VAPID_KEY";                            FIREBASE_VAPID="$REPLY"
 ask "FCM_ENDPOINT";                                  FCM_ENDPOINT="$REPLY"
-ask "SERVICE_ACCOUNT_PATH (path inside container)" "/var/www/sce/firebase-service-account.json"
-SERVICE_ACC_PATH="$REPLY"
+# Container paths — fixed, never ask
+SERVICE_ACC_PATH="/var/www/sce/firebase-service-account.json"
+KEYPATH="/var/www/sce/apns.p8"
 ask "APNS_KEY_ID";                                   APNS_KEY_ID="$REPLY"
 ask "APNS_TEAM_ID";                                  APNS_TEAM_ID="$REPLY"
 ask "BUNDLE_ID (iOS app bundle ID)";                 BUNDLE_ID="$REPLY"
-ask "KEYPATH (path to .p8 APNs key inside container)" "/var/www/sce/apns.p8"; KEYPATH="$REPLY"
 info 'ICE_SERVERS — JSON array of STUN/TURN servers for WebRTC.'
 ask 'ICE_SERVERS' '[{"urls":["stun:stun.l.google.com:19302"]}]';  ICE_SERVERS="$REPLY"
 ask_yn "Enable CCTV integration?" "n";               CCTV_ENABLED="$REPLY"
-ask "EASSIST_PLUGIN (URL path to dist-plugin)" "${DOMAIN_URL}/eassist/dist-plugin"; EASSIST_PLUGIN="$REPLY"
+# EASSIST_PLUGIN — URL of the eAssist dist-plugin build served by the eAssist container
+ask "EASSIST_PLUGIN (URL to eAssist dist-plugin)" "${DOMAIN_URL}/eassist/dist-plugin"; EASSIST_PLUGIN="$REPLY"
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 7 — Python Service Settings"
@@ -410,7 +408,7 @@ if [[ -n "$DIR_PHP" ]]; then
         "LGU=${LGU_CODE}" \
         "LGU_NAME=${LGU_NAME}" \
         "HASH_ID_SALT=${HASH_SALT}" \
-        "PARTNER_ID=${PARTNER_ID}" \
+        "PARTNER_ID=1" \
         "" \
         "# Upload paths" \
         "UPLOAD_TEMP_PATH=/var/www/sce/temp_uploads/" \
@@ -429,11 +427,11 @@ if [[ -n "$DIR_PHP" ]]; then
         "" \
         "# EMS" \
         "EMS_APP_NAME=EMS" \
-        "EMS_GOOGLE_MAPS_MAP_ID=${GOOGLE_MAPS_ID}" \
+        "EMS_GOOGLE_MAPS_MAP_ID=" \
         "EMS_FILE_PATH=${EMS_FILE_PATH}" \
         "EMS_SYSTEM_BASE_URL=/EMS" \
-        "EMS_LEVEL=${EMS_LEVEL}" \
-        "EMS_BOUNDARY_KM=${EMS_BOUNDARY_KM}" \
+        "EMS_LEVEL=1" \
+        "EMS_BOUNDARY_KM=10" \
         "" \
         "# Firebase / Push notifications" \
         "FCM_ENDPOINT=${FCM_ENDPOINT}" \

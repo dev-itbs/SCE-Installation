@@ -94,7 +94,8 @@ echo.
 echo ================================================================
 echo  STEP 3 -- Database (VaultFlow360 / PostgreSQL)
 echo ================================================================
-call :rand16 _r1 & set /p "PG_DB=PostgreSQL database name [postgres]: " & if "!PG_DB!"=="" set "PG_DB=postgres"
+echo  Info: Name of the PostgreSQL database the app will use.
+set /p "PG_DB=PostgreSQL database name [sce_db]: " & if "!PG_DB!"=="" set "PG_DB=sce_db"
 set /p "PG_USER=PostgreSQL app username [appuser]: " & if "!PG_USER!"=="" set "PG_USER=appuser"
 call :rand16 _r2
 set /p "PG_PASSWORD=PostgreSQL app password [!_r2!]: " & if "!PG_PASSWORD!"=="" set "PG_PASSWORD=!_r2!"
@@ -165,11 +166,7 @@ echo  STEP 6 -- PHP App Settings
 echo ================================================================
 call :rand16 _rs
 set /p "HASH_SALT=HASH_ID_SALT [!_rs!]: " & if "!HASH_SALT!"=="" set "HASH_SALT=!_rs!"
-set /p "PARTNER_ID=PARTNER_ID [!LGU_CODE!]: " & if "!PARTNER_ID!"=="" set "PARTNER_ID=!LGU_CODE!"
 set /p "FACE_COLLECTION=AWS Rekognition FACE_COLLECTION name: "
-set /p "GOOGLE_MAPS_ID=EMS Google Maps Map ID: "
-set /p "EMS_LEVEL=EMS dispatch level [1]: " & if "!EMS_LEVEL!"=="" set "EMS_LEVEL=1"
-set /p "EMS_BOUNDARY_KM=EMS boundary radius km [10]: " & if "!EMS_BOUNDARY_KM!"=="" set "EMS_BOUNDARY_KM=10"
 echo  Info: COOKIE_DOMAIN is the domain where browsers send auth cookies.
 set /p "COOKIE_DOMAIN=COOKIE_DOMAIN [!DOMAIN!]: " & if "!COOKIE_DOMAIN!"=="" set "COOKIE_DOMAIN=!DOMAIN!"
 set /p "MAILGUN_DOMAIN=Mailgun domain: "
@@ -177,17 +174,18 @@ set /p "MAILGUN_API_KEY=Mailgun API key: "
 set /p "MAILGUN_VAL_KEY=Mailgun validation key: "
 set /p "FIREBASE_VAPID=FIREBASE_VAPID_KEY: "
 set /p "FCM_ENDPOINT=FCM_ENDPOINT: "
-set /p "SERVICE_ACC_PATH=SERVICE_ACCOUNT_PATH [/var/www/sce/firebase-service-account.json]: "
-if "!SERVICE_ACC_PATH!"=="" set "SERVICE_ACC_PATH=/var/www/sce/firebase-service-account.json"
+:: Container paths — fixed, never ask
+set "SERVICE_ACC_PATH=/var/www/sce/firebase-service-account.json"
+set "KEYPATH=/var/www/sce/apns.p8"
 set /p "APNS_KEY_ID=APNS_KEY_ID: "
 set /p "APNS_TEAM_ID=APNS_TEAM_ID: "
 set /p "BUNDLE_ID=BUNDLE_ID (iOS bundle ID): "
-set /p "KEYPATH=KEYPATH [/var/www/sce/apns.p8]: " & if "!KEYPATH!"=="" set "KEYPATH=/var/www/sce/apns.p8"
 set /p "ICE_SERVERS=ICE_SERVERS [{"urls":["stun:stun.l.google.com:19302"]}]: "
 if "!ICE_SERVERS!"=="" set "ICE_SERVERS=[{\"urls\":[\"stun:stun.l.google.com:19302\"]}]"
 set /p "_cctv=Enable CCTV integration? [y/N]: "
 set "CCTV_ENABLED=false"
 if /i "!_cctv!"=="y" set "CCTV_ENABLED=true"
+:: EASSIST_PLUGIN — URL of the eAssist dist-plugin build (not a file path)
 set /p "EASSIST_PLUGIN=EASSIST_PLUGIN URL [!DOMAIN_URL!/eassist/dist-plugin]: "
 if "!EASSIST_PLUGIN!"=="" set "EASSIST_PLUGIN=!DOMAIN_URL!/eassist/dist-plugin"
 
@@ -374,7 +372,7 @@ if defined DIR_PHP (
         echo LGU=!LGU_CODE!
         echo LGU_NAME=!LGU_NAME!
         echo HASH_ID_SALT=!HASH_SALT!
-        echo PARTNER_ID=!PARTNER_ID!
+        echo PARTNER_ID=1
         echo.
         echo # Upload paths
         echo UPLOAD_TEMP_PATH=/var/www/sce/temp_uploads/
@@ -393,11 +391,11 @@ if defined DIR_PHP (
         echo.
         echo # EMS
         echo EMS_APP_NAME=EMS
-        echo EMS_GOOGLE_MAPS_MAP_ID=!GOOGLE_MAPS_ID!
+        echo EMS_GOOGLE_MAPS_MAP_ID=
         echo EMS_FILE_PATH=!EMS_FILE_PATH!
         echo EMS_SYSTEM_BASE_URL=/EMS
-        echo EMS_LEVEL=!EMS_LEVEL!
-        echo EMS_BOUNDARY_KM=!EMS_BOUNDARY_KM!
+        echo EMS_LEVEL=1
+        echo EMS_BOUNDARY_KM=10
         echo.
         echo # Firebase / Push notifications
         echo FCM_ENDPOINT=!FCM_ENDPOINT!

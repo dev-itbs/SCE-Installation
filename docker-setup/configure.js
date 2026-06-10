@@ -208,7 +208,8 @@ async function main() {
   // ══════════════════════════════════════════════════════════════════════════
   title('STEP 3 — Database (VaultFlow360 / PostgreSQL)');
   // ══════════════════════════════════════════════════════════════════════════
-  const pgDb       = await ask('PostgreSQL database name', 'postgres');
+  info('This is the name of the PostgreSQL database the app will use.');
+  const pgDb       = await ask('PostgreSQL database name', 'sce_db');
   const pgUser     = await ask('PostgreSQL app username', 'appuser');
   const pgPassword = await ask('PostgreSQL app password', randSecret(16));
   const pgSuperPw  = await ask('PostgreSQL superuser password', randSecret(16));
@@ -263,11 +264,7 @@ async function main() {
   title('STEP 6 — PHP App Settings (SCE-PHP-SYSTEMS)');
   // ══════════════════════════════════════════════════════════════════════════
   const hashSalt       = await ask('HASH_ID_SALT (random string)', randSecret(16));
-  const partnerIdVal   = await ask('PARTNER_ID', lguCode);
   const faceCollection = await ask('AWS Rekognition FACE_COLLECTION name (create after install)');
-  const googleMapsId   = await ask('EMS Google Maps Map ID');
-  const emsLevel       = await ask('EMS dispatch level', '1');
-  const emsBoundaryKm  = await ask('EMS boundary radius (km)', '10');
 
   info(`Cookie domain = the domain where browsers send auth cookies.`);
   const cookieDomain   = await ask('COOKIE_DOMAIN', domain);
@@ -280,11 +277,12 @@ async function main() {
   info('Firebase — used for push notifications (Android/iOS).');
   const firebaseVapid  = await ask('FIREBASE_VAPID_KEY');
   const fcmEndpoint    = await ask('FCM_ENDPOINT');
-  const serviceAccPath = await ask('SERVICE_ACCOUNT_PATH (path inside container to JSON)', '/var/www/sce/firebase-service-account.json');
   const apnsKeyId      = await ask('APNS_KEY_ID');
   const apnsTeamId     = await ask('APNS_TEAM_ID');
   const bundleId       = await ask('BUNDLE_ID (iOS app bundle ID)');
-  const keypath        = await ask('KEYPATH (path to .p8 APNs key inside container)', '/var/www/sce/apns.p8');
+  // Container paths — fixed, not asked
+  const serviceAccPath = '/var/www/sce/firebase-service-account.json';
+  const keypath        = '/var/www/sce/apns.p8';
 
   info('ICE_SERVERS — JSON array of STUN/TURN servers for WebRTC.');
   info('Example: [{"urls":["stun:stun.l.google.com:19302"]}]');
@@ -292,8 +290,8 @@ async function main() {
 
   const cctvEnabled    = await askYN('Enable CCTV integration?', false);
 
-  info('eAssist plugin path served by the PHP container.');
-  const eassistPlugin  = await ask('EASSIST_PLUGIN (URL path to dist-plugin)', `${domainUrl}/eassist/dist-plugin`);
+  // EASSIST_PLUGIN — URL of the eAssist dist-plugin build served by the eAssist container
+  const eassistPlugin  = await ask('EASSIST_PLUGIN (URL to eAssist dist-plugin)', `${domainUrl}/eassist/dist-plugin`);
 
   // ══════════════════════════════════════════════════════════════════════════
   title('STEP 7 — Python Service Settings');
@@ -483,7 +481,7 @@ async function main() {
       `LGU=${lguCode}`,
       `LGU_NAME=${lguName}`,
       `HASH_ID_SALT=${hashSalt}`,
-      `PARTNER_ID=${partnerIdVal}`,
+      `PARTNER_ID=1`,
       '',
       '# Upload paths',
       `UPLOAD_TEMP_PATH=${uploadTempPath}`,
@@ -502,11 +500,11 @@ async function main() {
       '',
       '# EMS',
       `EMS_APP_NAME=EMS`,
-      `EMS_GOOGLE_MAPS_MAP_ID=${googleMapsId}`,
+      `EMS_GOOGLE_MAPS_MAP_ID=`,
       `EMS_FILE_PATH=${emsFilePath}`,
       `EMS_SYSTEM_BASE_URL=/EMS`,
-      `EMS_LEVEL=${emsLevel}`,
-      `EMS_BOUNDARY_KM=${emsBoundaryKm}`,
+      `EMS_LEVEL=1`,
+      `EMS_BOUNDARY_KM=10`,
       '',
       '# Firebase / Push notifications',
       `FCM_ENDPOINT=${fcmEndpoint}`,
