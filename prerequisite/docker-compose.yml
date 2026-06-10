@@ -1,0 +1,75 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # Redis
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    container_name: sce-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - sce_infra
+
+  # ---------------------------------------------------------------------------
+  # EMQX
+  # ---------------------------------------------------------------------------
+  emqx:
+    image: emqx/emqx:${EMQX_VERSION:-5.0.26}
+    container_name: sce-emqx
+    restart: unless-stopped
+    ports:
+      - "${EMQX_MQTT_PORT:-1883}:1883"       # MQTT
+      - "${EMQX_WS_PORT:-8083}:8083"          # MQTT over WebSocket
+      - "${EMQX_WSS_PORT:-2096}:8084"         # MQTT over WSS
+      - "${EMQX_MQTTS_PORT:-8883}:8883"       # MQTT over TLS
+      - "${EMQX_DASHBOARD_PORT:-18083}:18083" # Web dashboard
+    environment:
+      EMQX_NAME: sce-emqx
+      EMQX_HOST: 0.0.0.0
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USER:-admin}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD}
+    volumes:
+      - emqx_data:/opt/emqx/data
+      - emqx_log:/opt/emqx/log
+    networks:
+      - sce_infra
+
+  # ---------------------------------------------------------------------------
+  # MinIO  (on-prem only — enable with: COMPOSE_PROFILES=onprem)
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:${MINIO_VERSION:-latest}
+    container_name: sce-minio
+    profiles:
+      - onprem
+    restart: unless-stopped
+    ports:
+      - "${MINIO_API_PORT:-9010}:9000"
+      - "${MINIO_CONSOLE_PORT:-9011}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - sce_infra
+
+volumes:
+  redis_data:
+  emqx_data:
+  emqx_log:
+  minio_data:
+
+networks:
+  sce_infra:
+    name: sce_infra_network
