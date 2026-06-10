@@ -72,4 +72,4 @@ volumes:
 
 networks:
   sce_infra:
-    name: sce_infra_network
+    name: sce_infra
