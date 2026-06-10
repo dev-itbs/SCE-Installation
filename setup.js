@@ -75,6 +75,20 @@ const REPOS = [
   },
 ];
 
+// ─── TTY input (works when piped via irm | node or curl | node) ──────────────
+// When stdin is a pipe the script source is coming through it, not the user.
+// Open the real terminal device for interactive prompts instead.
+function openTTY() {
+  if (process.stdin.isTTY) return process.stdin;
+  try {
+    // Windows: \\.\CON  |  Unix: /dev/tty
+    const ttyPath = process.platform === 'win32' ? '\\\\.\\CON' : '/dev/tty';
+    return require('fs').createReadStream(ttyPath);
+  } catch {
+    return process.stdin; // fallback — best effort
+  }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 let rl;
 function ask(question, defaultVal = '') {
@@ -119,7 +133,7 @@ async function main() {
     process.exit(1);
   }
 
-  rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl = readline.createInterface({ input: openTTY(), output: process.stdout });
 
   // ── Parent folder ─────────────────────────────────────────────────────────
   const folderInput = await ask('Parent folder name', 'SCE-ECOSYSTEM');

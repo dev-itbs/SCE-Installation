@@ -32,6 +32,17 @@ const dim   = m => console.log(`${c.grey}    ${m}${c.reset}`);
 const title = m => console.log(`\n${c.bold}${c.cyan}━━━  ${m}  ━━━${c.reset}\n`);
 const hr    = () => console.log(`${c.grey}${'─'.repeat(70)}${c.reset}`);
 
+// ── TTY input (works when piped via irm | node or curl | node) ───────────────
+function openTTY() {
+  if (process.stdin.isTTY) return process.stdin;
+  try {
+    const ttyPath = process.platform === 'win32' ? '\\\\.\\CON' : '/dev/tty';
+    return require('fs').createReadStream(ttyPath);
+  } catch {
+    return process.stdin;
+  }
+}
+
 // ── Prompt helper ─────────────────────────────────────────────────────────────
 let rl;
 function ask(question, defaultVal = '') {
@@ -152,7 +163,7 @@ async function resolveRepos(repos) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
-  rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl = readline.createInterface({ input: openTTY(), output: process.stdout });
 
   console.clear();
   console.log(`${c.bold}${c.cyan}`);
