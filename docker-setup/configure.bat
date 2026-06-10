@@ -37,12 +37,13 @@ for /D %%D in ("%ROOT%\*") do (
     echo !_nl! | findstr /i "eassist"      >nul 2>&1 && if not defined DIR_EASSIST set "DIR_EASSIST=%%D"
 )
 
-echo  Discovered repositories:
-if defined DIR_VAULT   ( echo    vault    -^> !DIR_VAULT! ) else ( echo    [WARN] VaultFlow360 not found )
-if defined DIR_PREREQ  ( echo    prereq   -^> !DIR_PREREQ! ) else ( echo    [WARN] SCE-Installation not found )
-if defined DIR_PHP     ( echo    php      -^> !DIR_PHP! ) else ( echo    [WARN] SCE-PHP-SYSTEMS not found )
-if defined DIR_PYTHON  ( echo    python   -^> !DIR_PYTHON! ) else ( echo    [WARN] SCE-Python-Service not found )
-if defined DIR_EASSIST ( echo    eassist  -^> !DIR_EASSIST! ) else ( echo    [WARN] eAssist-AI-Service not found )
+echo  Scanning for repositories...
+echo.
+call :resolve_repo DIR_VAULT   "VaultFlow360        (PostgreSQL HA)"       "!DIR_VAULT!"
+call :resolve_repo DIR_PREREQ  "SCE-Installation    (This installer repo)" "!DIR_PREREQ!"
+call :resolve_repo DIR_PHP     "SCE-PHP-SYSTEMS     (PHP web app)"         "!DIR_PHP!"
+call :resolve_repo DIR_PYTHON  "SCE-Python-Service  (FastAPI + workers)"   "!DIR_PYTHON!"
+call :resolve_repo DIR_EASSIST "eAssist-AI-Service  (AI assistant)"        "!DIR_EASSIST!"
 echo.
 
 :: ── Already configured? ───────────────────────────────────────────────────────
@@ -64,9 +65,13 @@ echo.
 echo ================================================================
 echo  STEP 2 -- Domain and Identity
 echo ================================================================
-echo  Info: Public domain of your SCE installation (no https://, no trailing slash)
-set /p "DOMAIN=System domain: "
+echo  Info: Enter your public domain, or press Enter for localhost (local development).
+set "DOMAIN=localhost"
+set /p "DOMAIN=System domain [localhost]: "
+if "!DOMAIN!"=="" set "DOMAIN=localhost"
 set "DOMAIN_URL=https://!DOMAIN!"
+if "!DOMAIN!"=="localhost" set "DOMAIN_URL=http://localhost"
+echo !DOMAIN! | findstr /b "localhost:" >nul 2>&1 && set "DOMAIN_URL=http://!DOMAIN!"
 
 :: Simple slugify: replace spaces/underscores/dots with hyphens, lowercase
 set "_slug=!ECOSYSTEM_NAME!"
@@ -630,6 +635,30 @@ pause
 exit /b 0
 
 :: ─────────────────────────────────────────────────────────────────────────────
+:resolve_repo
+    :: %~1 = variable name, %~2 = label, %~3 = current value
+    if not "%~3"=="" (
+        echo   [OK] Found %~2 -^> %~3
+    ) else (
+        echo   [WARN] Could not find %~2
+        set /p "_rr_input=  Enter folder name inside %ROOT% (or leave blank to skip): "
+        if not "!_rr_input!"=="" (
+            set "_rr_full=%ROOT%\!_rr_input!"
+            :: Allow absolute path too
+            echo !_rr_input! | findstr /r "^[A-Za-z]:\\" >nul 2>&1 && set "_rr_full=!_rr_input!"
+            if exist "!_rr_full!\" (
+                set "%~1=!_rr_full!"
+                echo   [OK] Using !_rr_full!
+            ) else (
+                echo   [WARN] Path not found: !_rr_full! -- skipping %~2
+            )
+        ) else (
+            echo   [SKIP] Skipping %~2
+        )
+        set "_rr_input="
+    )
+    exit /b 0
+
 :rand16
     set "%~1=%RANDOM%%RANDOM%%RANDOM%"
     exit /b 0

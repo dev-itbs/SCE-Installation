@@ -118,6 +118,38 @@ function discoverRepos() {
   return repos;
 }
 
+async function resolveRepos(repos) {
+  const LABELS = {
+    vault:   'VaultFlow360        (PostgreSQL HA)',
+    prereq:  'SCE-Installation    (This installer repo)',
+    php:     'SCE-PHP-SYSTEMS     (PHP web app)',
+    python:  'SCE-Python-Service  (FastAPI + workers)',
+    cpa:     'SCE-Vue-CPA         (Citizen Portal App)',
+    eassist: 'eAssist-AI-Service  (AI assistant)',
+  };
+  for (const [key, label] of Object.entries(LABELS)) {
+    if (repos[key]) {
+      ok(`Found ${label} → ${path.relative(ROOT, repos[key])}`);
+    } else {
+      warn(`Could not find ${label}`);
+      const ans = await ask(`  Enter folder name inside ${ROOT} (or leave blank to skip)`);
+      if (ans) {
+        const full = path.isAbsolute(ans) ? ans : path.join(ROOT, ans);
+        if (fs.existsSync(full)) {
+          repos[key] = full;
+          repos[`${key}Name`] = path.basename(full);
+          ok(`Using ${full}`);
+        } else {
+          warn(`Path not found: ${full} — skipping ${label}`);
+        }
+      } else {
+        dim(`Skipping ${label}`);
+      }
+    }
+  }
+  return repos;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
   rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -131,13 +163,9 @@ async function main() {
   console.log(`  Ecosystem root: ${c.bold}${ROOT}${c.reset}\n`);
 
   // ── Discover repos ─────────────────────────────────────────────────────────
-  const repos = discoverRepos();
-  const ecosystemName = path.basename(ROOT); // e.g. MABALACAT-ECOSYSTEM
-
-  log('Discovered repositories:');
-  for (const [k, v] of Object.entries(repos)) {
-    if (!k.endsWith('Name')) dim(`${k.padEnd(10)} → ${path.relative(ROOT, v)}`);
-  }
+  const ecosystemName = path.basename(ROOT);
+  log('Scanning for repositories...\n');
+  const repos = await resolveRepos(discoverRepos());
   console.log();
 
   // ── Check if env already configured ───────────────────────────────────────
@@ -168,9 +196,10 @@ async function main() {
   // ══════════════════════════════════════════════════════════════════════════
   title('STEP 2 — Domain & Identity');
   // ══════════════════════════════════════════════════════════════════════════
-  info('This is the public domain of your SCE installation (e.g. mabalacat.smartcountry.ph)');
-  const domain = await askRequired('System domain (no https://, no trailing slash)');
-  const domainUrl = `https://${domain}`;
+  info('Enter your public domain, or press Enter to use localhost for local development.');
+  const domain = await ask('System domain (no https://, no trailing slash)', 'localhost');
+  const isLocalhost = domain === 'localhost' || domain.startsWith('localhost:');
+  const domainUrl = isLocalhost ? `http://${domain}` : `https://${domain}`;
 
   info('LGU short code used for internal identifiers (e.g. mabalacat)');
   const lguCode = await ask('LGU code', slugify(ecosystemName));

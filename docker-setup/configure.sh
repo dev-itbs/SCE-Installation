@@ -22,31 +22,31 @@ dim()   { echo -e "${GREY}    ${1}${RESET}"; }
 title() { echo -e "\n${BOLD}${CYAN}━━━  ${1}  ━━━${RESET}\n"; }
 hr()    { echo -e "${GREY}$(printf '─%.0s' {1..70})${RESET}"; }
 
+# All prompt functions store their result in REPLY — never use $() with these.
 ask() {
     local prompt="$1" default="${2:-}"
     local hint=""
     [[ -n "$default" ]] && hint=" [${GREY}${default}${RESET}]"
-    printf "  %b%b: " "${prompt}" "${hint}"
-    read -r _input
-    echo "${_input:-$default}"
+    printf "  %b%b: " "${prompt}" "${hint}" >/dev/tty
+    read -r REPLY </dev/tty
+    [[ -z "$REPLY" ]] && REPLY="$default"
 }
 
 ask_required() {
-    local prompt="$1" val=""
-    while [[ -z "$val" ]]; do
-        val=$(ask "${prompt} ${RED}(required)${RESET}")
-        [[ -z "$val" ]] && warn "This field is required."
+    local prompt="$1"
+    REPLY=""
+    while [[ -z "$REPLY" ]]; do
+        ask "${prompt} ${RED}(required)${RESET}"
+        [[ -z "$REPLY" ]] && warn "This field is required."
     done
-    echo "$val"
 }
 
 ask_yn() {
     local prompt="$1" default="${2:-y}"
     local hint="[Y/n]"; [[ "$default" == "n" ]] && hint="[y/N]"
-    local ans
-    ans=$(ask "${prompt} ${hint}")
-    [[ -z "$ans" ]] && ans="$default"
-    [[ "${ans,,}" == y* ]] && echo "true" || echo "false"
+    ask "${prompt} ${hint}"
+    [[ -z "$REPLY" ]] && REPLY="$default"
+    [[ "${REPLY,,}" == y* ]] && REPLY="true" || REPLY="false"
 }
 
 rand_secret() {
@@ -105,17 +105,42 @@ echo "  ╚═══════════════════════
 echo -e "${RESET}"
 echo -e "  Ecosystem root: ${BOLD}${ROOT}${RESET}\n"
 
-log "Discovered repositories:"
-[[ -n "$DIR_VAULT"   ]] && dim "vault    → ${DIR_VAULT#${ROOT}/}"    || warn "VaultFlow360 not found"
-[[ -n "$DIR_PREREQ"  ]] && dim "prereq   → ${DIR_PREREQ#${ROOT}/}"   || warn "SCE-Installation not found"
-[[ -n "$DIR_PHP"     ]] && dim "php      → ${DIR_PHP#${ROOT}/}"      || warn "SCE-PHP-SYSTEMS not found"
-[[ -n "$DIR_PYTHON"  ]] && dim "python   → ${DIR_PYTHON#${ROOT}/}"   || warn "SCE-Python-Service not found"
-[[ -n "$DIR_EASSIST" ]] && dim "eassist  → ${DIR_EASSIST#${ROOT}/}"  || warn "eAssist-AI-Service not found"
+# ── Resolve missing repos ─────────────────────────────────────────────────────
+resolve_repo() {
+    local var="$1" label="$2" current="$3"
+    if [[ -n "$current" ]]; then
+        ok "Found ${label} → ${current#${ROOT}/}"
+    else
+        warn "Could not find ${label}"
+        ask "  Enter folder name inside ${ROOT} (or leave blank to skip)"
+        if [[ -n "$REPLY" ]]; then
+            local full="$REPLY"
+            [[ "${full:0:1}" != "/" ]] && full="${ROOT}/${REPLY}"
+            if [[ -d "$full" ]]; then
+                eval "${var}=\"${full}\""
+                ok "Using ${full}"
+            else
+                warn "Path not found: ${full} — skipping ${label}"
+            fi
+        else
+            dim "Skipping ${label}"
+        fi
+    fi
+}
+
+log "Scanning for repositories..."
+echo ""
+resolve_repo DIR_VAULT   "VaultFlow360        (PostgreSQL HA)"       "$DIR_VAULT"
+resolve_repo DIR_PREREQ  "SCE-Installation    (This installer repo)" "$DIR_PREREQ"
+resolve_repo DIR_PHP     "SCE-PHP-SYSTEMS     (PHP web app)"         "$DIR_PHP"
+resolve_repo DIR_PYTHON  "SCE-Python-Service  (FastAPI + workers)"   "$DIR_PYTHON"
+resolve_repo DIR_EASSIST "eAssist-AI-Service  (AI assistant)"        "$DIR_EASSIST"
 echo ""
 
 # ── Already configured? ───────────────────────────────────────────────────────
 hr
-SKIP_CONFIG=$(ask_yn "Already configured .env files — just (re)start Docker?" "n")
+ask_yn "Already configured .env files — just (re)start Docker?" "n"
+SKIP_CONFIG="$REPLY"
 
 if [[ "$SKIP_CONFIG" == "true" ]]; then
     warn "Skipping env generation. Starting Docker stacks only."
@@ -124,114 +149,128 @@ else
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 1 — Deployment Type"
-IS_ONPREM=$(ask_yn "Is this an ON-PREM deployment? (MinIO instead of cloud S3)" "n")
+ask_yn "Is this an ON-PREM deployment? (MinIO instead of cloud S3)" "n"
+IS_ONPREM="$REPLY"
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 2 — Domain & Identity"
-info "Public domain of your SCE installation (e.g. mabalacat.smartcountry.ph)"
-DOMAIN=$(ask_required "System domain (no https://, no trailing slash)")
-DOMAIN_URL="https://${DOMAIN}"
-LGU_CODE=$(ask "LGU code" "$(slugify "$ECOSYSTEM_NAME")")
-LGU_NAME=$(ask "LGU full name" "${ECOSYSTEM_NAME//-/ }")
+info "Enter your public domain, or press Enter to use localhost for local development."
+ask "System domain (no https://, no trailing slash)" "localhost"
+DOMAIN="$REPLY"
+if [[ "$DOMAIN" == "localhost" || "$DOMAIN" == localhost:* ]]; then
+    DOMAIN_URL="http://${DOMAIN}"
+else
+    DOMAIN_URL="https://${DOMAIN}"
+fi
+ask "LGU code" "$(slugify "$ECOSYSTEM_NAME")"
+LGU_CODE="$REPLY"
+ask "LGU full name" "${ECOSYSTEM_NAME//-/ }"
+LGU_NAME="$REPLY"
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 3 — Database (VaultFlow360 / PostgreSQL)"
-PG_DB=$(ask "PostgreSQL database name" "postgres")
-PG_USER=$(ask "PostgreSQL app username" "appuser")
-PG_PASSWORD=$(ask "PostgreSQL app password" "$(rand_secret 16)")
-PG_SUPER_PW=$(ask "PostgreSQL superuser password" "$(rand_secret 16)")
-REPMGR_PW=$(ask "Repmgr password" "$(rand_secret 16)")
-PGPOOL_USER=$(ask "Pgpool admin username" "admin")
-PGPOOL_PW=$(ask "Pgpool admin password" "$(rand_secret 16)")
-BACKUP_PW=$(ask "Backup API admin password" "$(rand_secret 16)")
-BACKUP_KEY=$(ask "Backup API key" "$(rand_secret 12)")
+ask "PostgreSQL database name" "postgres";          PG_DB="$REPLY"
+ask "PostgreSQL app username" "appuser";            PG_USER="$REPLY"
+ask "PostgreSQL app password" "$(rand_secret 16)";  PG_PASSWORD="$REPLY"
+ask "PostgreSQL superuser password" "$(rand_secret 16)"; PG_SUPER_PW="$REPLY"
+ask "Repmgr password" "$(rand_secret 16)";          REPMGR_PW="$REPLY"
+ask "Pgpool admin username" "admin";                PGPOOL_USER="$REPLY"
+ask "Pgpool admin password" "$(rand_secret 16)";    PGPOOL_PW="$REPLY"
+ask "Backup API admin password" "$(rand_secret 16)"; BACKUP_PW="$REPLY"
+ask "Backup API key" "$(rand_secret 12)";           BACKUP_KEY="$REPLY"
 info "External Postgres host for Pgpool replication (leave blank if none)"
-PG_EXT_HOST=$(ask "PGPOOL_EXTERNAL_PG_HOST" "")
-PG_EXT_PORT=""; [[ -n "$PG_EXT_HOST" ]] && PG_EXT_PORT=$(ask "PGPOOL_EXTERNAL_PG_PORT" "5432")
+ask "PGPOOL_EXTERNAL_PG_HOST" "";                   PG_EXT_HOST="$REPLY"
+PG_EXT_PORT=""
+if [[ -n "$PG_EXT_HOST" ]]; then
+    ask "PGPOOL_EXTERNAL_PG_PORT" "5432"; PG_EXT_PORT="$REPLY"
+fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 4 — Redis & EMQX"
-REDIS_PASSWORD=$(ask "Redis password" "$(rand_secret 16)")
-EMQX_DASH_PW=$(ask "EMQX dashboard password" "$(rand_secret 16)")
+ask "Redis password" "$(rand_secret 16)";           REDIS_PASSWORD="$REPLY"
+ask "EMQX dashboard password" "$(rand_secret 16)";  EMQX_DASH_PW="$REPLY"
 info "EMQX API key and secret are created in the EMQX dashboard AFTER first boot."
-MQ_API_KEY=$(ask "EMQX API key (optional, fill after boot)" "")
-MQ_API_SECRET=$(ask "EMQX API secret (optional, fill after boot)" "")
-MQ_TOPIC=$(ask "MQTT topic" "$LGU_CODE")
+ask "EMQX API key (optional, fill after boot)" "";  MQ_API_KEY="$REPLY"
+ask "EMQX API secret (optional, fill after boot)" ""; MQ_API_SECRET="$REPLY"
+ask "MQTT topic" "$LGU_CODE";                        MQ_TOPIC="$REPLY"
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 5 — S3 / Object Storage"
 if [[ "$IS_ONPREM" == "true" ]]; then
     info "On-prem: MinIO will be used. Container hostname is sce-minio."
     S3_ENDPOINT="http://sce-minio:9000"
-    S3_BUCKET=$(ask "MinIO bucket name" "$LGU_CODE")
+    ask "MinIO bucket name" "$LGU_CODE";            S3_BUCKET="$REPLY"
     S3_REGION="us-east-1"
-    S3_KEY=$(ask "MinIO access key" "minioadmin")
-    S3_SECRET=$(ask "MinIO secret key" "$(rand_secret 16)")
+    ask "MinIO access key" "minioadmin";             S3_KEY="$REPLY"
+    ask "MinIO secret key" "$(rand_secret 16)";      S3_SECRET="$REPLY"
     S3_FORCE_PATH_STYLE="true"
     info "Remember to create the bucket \"${S3_BUCKET}\" in MinIO console after first boot."
 else
     info "Cloud: provide your S3-compatible storage credentials."
-    S3_ENDPOINT=$(ask "S3 endpoint URL (e.g. https://sgp1.digitaloceanspaces.com)")
-    S3_BUCKET=$(ask "S3 bucket name")
-    S3_REGION=$(ask "S3 region" "sgp1")
-    S3_KEY=$(ask "S3 access key")
-    S3_SECRET=$(ask "S3 secret key")
+    ask "S3 endpoint URL (e.g. https://sgp1.digitaloceanspaces.com)"; S3_ENDPOINT="$REPLY"
+    ask "S3 bucket name";                            S3_BUCKET="$REPLY"
+    ask "S3 region" "sgp1";                          S3_REGION="$REPLY"
+    ask "S3 access key";                             S3_KEY="$REPLY"
+    ask "S3 secret key";                             S3_SECRET="$REPLY"
     S3_FORCE_PATH_STYLE="false"
 fi
-S3_UPLOAD_PATH=$(ask "S3 prefix for uploads" "${ECOSYSTEM_NAME}/uploads/")
-EMS_FILE_PATH=$(ask "S3 prefix for EMS incident files" "${ECOSYSTEM_NAME}/incident/")
-UPLOAD_DEST_PATH=$(ask "S3 prefix for final uploads" "${ECOSYSTEM_NAME}/dest/")
+ask "S3 prefix for uploads" "${ECOSYSTEM_NAME}/uploads/";        S3_UPLOAD_PATH="$REPLY"
+ask "S3 prefix for EMS incident files" "${ECOSYSTEM_NAME}/incident/"; EMS_FILE_PATH="$REPLY"
+ask "S3 prefix for final uploads" "${ECOSYSTEM_NAME}/dest/";     UPLOAD_DEST_PATH="$REPLY"
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 6 — PHP App Settings (SCE-PHP-SYSTEMS)"
-HASH_SALT=$(ask "HASH_ID_SALT" "$(rand_secret 16)")
-PARTNER_ID=$(ask "PARTNER_ID" "$LGU_CODE")
-FACE_COLLECTION=$(ask "AWS Rekognition FACE_COLLECTION name")
-GOOGLE_MAPS_ID=$(ask "EMS Google Maps Map ID")
-EMS_LEVEL=$(ask "EMS dispatch level" "1")
-EMS_BOUNDARY_KM=$(ask "EMS boundary radius (km)" "10")
+ask "HASH_ID_SALT" "$(rand_secret 16)";              HASH_SALT="$REPLY"
+ask "PARTNER_ID" "$LGU_CODE";                        PARTNER_ID="$REPLY"
+ask "AWS Rekognition FACE_COLLECTION name";          FACE_COLLECTION="$REPLY"
+ask "EMS Google Maps Map ID";                        GOOGLE_MAPS_ID="$REPLY"
+ask "EMS dispatch level" "1";                        EMS_LEVEL="$REPLY"
+ask "EMS boundary radius (km)" "10";                 EMS_BOUNDARY_KM="$REPLY"
 info "Cookie domain = the domain where browsers send auth cookies."
-COOKIE_DOMAIN=$(ask "COOKIE_DOMAIN" "$DOMAIN")
+ask "COOKIE_DOMAIN" "$DOMAIN";                       COOKIE_DOMAIN="$REPLY"
 info "Mailgun is used for email notifications."
-MAILGUN_DOMAIN=$(ask "Mailgun domain")
-MAILGUN_API_KEY=$(ask "Mailgun API key")
-MAILGUN_VAL_KEY=$(ask "Mailgun validation key")
+ask "Mailgun domain";                                MAILGUN_DOMAIN="$REPLY"
+ask "Mailgun API key";                               MAILGUN_API_KEY="$REPLY"
+ask "Mailgun validation key";                        MAILGUN_VAL_KEY="$REPLY"
 info "Firebase — used for push notifications (Android/iOS)."
-FIREBASE_VAPID=$(ask "FIREBASE_VAPID_KEY")
-FCM_ENDPOINT=$(ask "FCM_ENDPOINT")
-SERVICE_ACC_PATH=$(ask "SERVICE_ACCOUNT_PATH (path inside container)" "/var/www/sce/firebase-service-account.json")
-APNS_KEY_ID=$(ask "APNS_KEY_ID")
-APNS_TEAM_ID=$(ask "APNS_TEAM_ID")
-BUNDLE_ID=$(ask "BUNDLE_ID (iOS app bundle ID)")
-KEYPATH=$(ask "KEYPATH (path to .p8 APNs key inside container)" "/var/www/sce/apns.p8")
+ask "FIREBASE_VAPID_KEY";                            FIREBASE_VAPID="$REPLY"
+ask "FCM_ENDPOINT";                                  FCM_ENDPOINT="$REPLY"
+ask "SERVICE_ACCOUNT_PATH (path inside container)" "/var/www/sce/firebase-service-account.json"
+SERVICE_ACC_PATH="$REPLY"
+ask "APNS_KEY_ID";                                   APNS_KEY_ID="$REPLY"
+ask "APNS_TEAM_ID";                                  APNS_TEAM_ID="$REPLY"
+ask "BUNDLE_ID (iOS app bundle ID)";                 BUNDLE_ID="$REPLY"
+ask "KEYPATH (path to .p8 APNs key inside container)" "/var/www/sce/apns.p8"; KEYPATH="$REPLY"
 info 'ICE_SERVERS — JSON array of STUN/TURN servers for WebRTC.'
-ICE_SERVERS=$(ask 'ICE_SERVERS' '[{"urls":["stun:stun.l.google.com:19302"]}]')
-CCTV_ENABLED=$(ask_yn "Enable CCTV integration?" "n")
-EASSIST_PLUGIN=$(ask "EASSIST_PLUGIN (URL path to dist-plugin)" "${DOMAIN_URL}/eassist/dist-plugin")
+ask 'ICE_SERVERS' '[{"urls":["stun:stun.l.google.com:19302"]}]';  ICE_SERVERS="$REPLY"
+ask_yn "Enable CCTV integration?" "n";               CCTV_ENABLED="$REPLY"
+ask "EASSIST_PLUGIN (URL path to dist-plugin)" "${DOMAIN_URL}/eassist/dist-plugin"; EASSIST_PLUGIN="$REPLY"
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 7 — Python Service Settings"
-JWT_SECRET=$(ask "JWT_SECRET_KEY" "$(rand_secret 32)")
-OPENAI_KEY=$(ask "OpenAI API key")
-OPENAI_MODEL=$(ask "OpenAI model" "gpt-4o-mini")
-FACE_THRESHOLD=$(ask "FACE_MATCH_THRESHOLD (0.0-1.0)" "0.45")
+ask "JWT_SECRET_KEY" "$(rand_secret 32)";            JWT_SECRET="$REPLY"
+ask "OpenAI API key";                                OPENAI_KEY="$REPLY"
+ask "OpenAI model" "gpt-4o-mini";                   OPENAI_MODEL="$REPLY"
+ask "FACE_MATCH_THRESHOLD (0.0-1.0)" "0.45";         FACE_THRESHOLD="$REPLY"
 VSS_HOST=""; VSS_USER="system"; VSS_PW=""; VSS_STOMP_PORT=""; IS_TAILSCALE="false"; TAILSCALE_IP=""
 CCTV_COMPOSE=""
 if [[ "$CCTV_ENABLED" == "true" ]]; then
     info "VSS (Video Surveillance System) connection details."
-    VSS_HOST=$(ask "VSS_IP_PORT (host:port)")
-    VSS_USER=$(ask "VSS_USERNAME" "system")
-    VSS_PW=$(ask "VSS_PASSWORD")
-    VSS_STOMP_PORT=$(ask "VSS_STOMP_PORT" "61615")
-    IS_TAILSCALE=$(ask_yn "Using Tailscale VPN?" "n")
-    [[ "$IS_TAILSCALE" == "true" ]] && TAILSCALE_IP=$(ask "Tailscale IP of this host")
+    ask "VSS_IP_PORT (host:port)";                   VSS_HOST="$REPLY"
+    ask "VSS_USERNAME" "system";                     VSS_USER="$REPLY"
+    ask "VSS_PASSWORD";                              VSS_PW="$REPLY"
+    ask "VSS_STOMP_PORT" "61615";                    VSS_STOMP_PORT="$REPLY"
+    ask_yn "Using Tailscale VPN?" "n";               IS_TAILSCALE="$REPLY"
+    if [[ "$IS_TAILSCALE" == "true" ]]; then
+        ask "Tailscale IP of this host"; TAILSCALE_IP="$REPLY"
+    fi
     CCTV_COMPOSE="cctv"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "STEP 8 — eAssist AI Service"
-EASSIST_OAI_KEY=$(ask "OpenAI API key for eAssist" "$OPENAI_KEY")
-EASSIST_MODEL=$(ask "LLM model for eAssist" "gpt-4o-mini")
+ask "OpenAI API key for eAssist" "$OPENAI_KEY";      EASSIST_OAI_KEY="$REPLY"
+ask "LLM model for eAssist" "gpt-4o-mini";           EASSIST_MODEL="$REPLY"
 
 # ══════════════════════════════════════════════════════════════════════════════
 title "Writing .env files"
@@ -550,7 +589,8 @@ if [[ -n "$DIR_EASSIST" ]]; then
 fi
 
 # ── Ask to start Docker ───────────────────────────────────────────────────────
-START_DOCKER=$(ask_yn "Start all Docker stacks now?" "y")
+ask_yn "Start all Docker stacks now?" "y"
+START_DOCKER="$REPLY"
 fi  # end of skip_config block
 
 # ══════════════════════════════════════════════════════════════════════════════

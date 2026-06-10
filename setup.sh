@@ -8,13 +8,8 @@
 set -euo pipefail
 
 # ── Colours ───────────────────────────────────────────────────────────────────
-BOLD='\033[1m'
-CYAN='\033[36m'
-GREEN='\033[32m'
-YELLOW='\033[33m'
-RED='\033[31m'
-GREY='\033[90m'
-RESET='\033[0m'
+BOLD='\033[1m'; CYAN='\033[36m'; GREEN='\033[32m'
+YELLOW='\033[33m'; RED='\033[31m'; GREY='\033[90m'; RESET='\033[0m'
 
 log()   { echo -e "${CYAN}${1}${RESET}"; }
 ok()    { echo -e "${GREEN}  ✔ ${1}${RESET}"; }
@@ -81,20 +76,35 @@ read -rs GH_TOKEN
 echo ""
 echo ""
 
-# ── Select repos ─────────────────────────────────────────────────────────────
+inject_token() {
+    local url="$1"
+    [[ -n "$GH_TOKEN" ]] && echo "${url/https:\/\//https://${GH_TOKEN}@}" || echo "$url"
+}
+
+# ── Select repos ──────────────────────────────────────────────────────────────
 title "Select repositories"
 hr
-echo "Press Enter to accept default (Y). Type N to skip."
+echo "Press Enter to accept Yes. Type N to skip."
+echo "Type C to use a custom URL instead of the default."
 echo ""
 
 declare -A SELECTED
+declare -A FINAL_URLS
+
 for key in "${REPO_ORDER[@]}"; do
-    printf "  Clone ${BOLD}${REPO_LABELS[$key]}${RESET}? [Y/n]: "
+    printf "  Clone ${BOLD}${REPO_LABELS[$key]}${RESET}? [Y/n/c]: "
     read -r ans
-    if [[ "${ans,,}" == "n" ]]; then
+    ans="${ans,,}"
+    if [[ "$ans" == "n" ]]; then
         SELECTED[$key]=0
+    elif [[ "$ans" == "c" ]]; then
+        SELECTED[$key]=1
+        printf "  Custom URL for ${key} [${REPO_URLS[$key]}]: "
+        read -r custom_url
+        FINAL_URLS[$key]="${custom_url:-${REPO_URLS[$key]}}"
     else
         SELECTED[$key]=1
+        FINAL_URLS[$key]="${REPO_URLS[$key]}"
     fi
 done
 
@@ -121,17 +131,14 @@ FAILED=0
 
 clone_or_pull() {
     local key="$1"
-    local url="${REPO_URLS[$key]}"
+    local url
+    url="$(inject_token "${FINAL_URLS[$key]}")"
+    local display_url="${FINAL_URLS[$key]}"
     local target="${PARENT_FOLDER}/${key}"
-
-    # Inject token
-    if [[ -n "$GH_TOKEN" ]]; then
-        url="${url/https:\/\//https://${GH_TOKEN}@}"
-    fi
 
     echo ""
     echo -e "${BOLD}→ ${key}${RESET}"
-    dim "${REPO_URLS[$key]}"
+    dim "${display_url}"
     dim "→ ${target}"
 
     if [[ -d "${target}/.git" ]]; then
@@ -140,14 +147,41 @@ clone_or_pull() {
             ok "Updated"
         else
             err "git pull failed for ${key}"
-            FAILED=1
+            printf "  Enter correct URL to re-clone, or leave blank to skip: "
+            read -r retry_url
+            if [[ -n "$retry_url" ]]; then
+                local retry_auth
+                retry_auth="$(inject_token "$retry_url")"
+                rm -rf "$target"
+                if git clone "$retry_auth" "$target"; then
+                    ok "Cloned from new URL"
+                else
+                    err "Clone failed again for ${key}"
+                    FAILED=1
+                fi
+            else
+                FAILED=1
+            fi
         fi
     else
         if git clone "$url" "$target"; then
             ok "Cloned"
         else
             err "git clone failed for ${key}"
-            FAILED=1
+            printf "  Enter correct URL to try again, or leave blank to skip: "
+            read -r retry_url
+            if [[ -n "$retry_url" ]]; then
+                local retry_auth
+                retry_auth="$(inject_token "$retry_url")"
+                if git clone "$retry_auth" "$target"; then
+                    ok "Cloned from new URL"
+                else
+                    err "Clone failed again for ${key}"
+                    FAILED=1
+                fi
+            else
+                FAILED=1
+            fi
         fi
     fi
 }
@@ -163,12 +197,12 @@ echo ""
 
 if [[ $FAILED -eq 0 ]]; then
     ok "All done!"
-    log "Your ecosystem is in: ${BOLD}${PARENT_FOLDER}${RESET}"
+    log "Your ecosystem is in: ${PARENT_FOLDER}"
     echo ""
     echo -e "${GREY}Next steps:${RESET}"
     echo "  1. cd ${PARENT_FOLDER}"
     echo "  2. Read SCE-Installation/README.md for full setup instructions"
-    echo "  3. Start with VaultFlow360, then SCE-Installation/prerequisite, then the apps."
+    echo "  3. Run: node SCE-Installation/docker-setup/configure.js"
     echo ""
 else
     warn "Some repositories failed. Check the errors above and re-run."
